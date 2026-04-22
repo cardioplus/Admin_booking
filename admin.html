@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - CardioPlus Clinic</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        const firebaseConfig = { /* ใส่ Config ชุดเดิมของคุณหมอ */ };
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // ฟังก์ชันอัปเดตสถานะคิว
+        window.updateStatus = async (id, newStatus) => {
+            const docRef = doc(db, "appointments", id);
+            await updateDoc(docRef, { status: newStatus });
+        };
+
+        async function initAdmin() {
+            await liff.init({ liffId: "ใส่_LIFF_ID_สำหรับหน้า_Admin" });
+            if (!liff.isLoggedIn()) { liff.login(); return; }
+            
+            const profile = await liff.getProfile();
+            // ตรวจสอบสิทธิ์เบื้องต้น (ใส่ User ID ของคุณหมอที่นี่)
+            const adminList = ["YOUR_LINE_USER_ID_1", "YOUR_LINE_USER_ID_2"];
+            if (!adminList.includes(profile.userId)) {
+                alert("คุณไม่มีสิทธิ์เข้าถึงหน้านี้");
+                liff.closeWindow();
+            }
+
+            // ดึงข้อมูลแบบ Real-time
+            const q = query(collection(db, "appointments"), orderBy("timestamp", "desc"));
+            onSnapshot(q, (snapshot) => {
+                const tbody = document.getElementById("bookingList");
+                tbody.innerHTML = "";
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const date = new Date(data.timestamp.seconds * 1000).toLocaleDateString('th-TH');
+                    tbody.innerHTML += `
+                        <tr>
+                            <td>${data.patientName}</td>
+                            <td>${data.service}</td>
+                            <td>${data.date} / ${data.time}</td>
+                            <td><span class="status-${data.status}">${data.status}</span></td>
+                            <td>
+                                <button onclick="updateStatus('${doc.id}', 'ยืนยันแล้ว')">ยืนยัน</button>
+                                <button class="btn-cancel" onclick="updateStatus('${doc.id}', 'ยกเลิก')">ยกเลิก</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            });
+        }
+        initAdmin();
+    </script>
+    <style>
+        body { font-family: 'Sarabun', sans-serif; background: #FAF9F6; padding: 30px; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
+        h1 { color: #8B7D7B; font-size: 24px; border-bottom: 2px solid #F0ECE3; padding-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th { text-align: left; padding: 12px; border-bottom: 2px solid #F0ECE3; color: #8B7D7B; }
+        td { padding: 12px; border-bottom: 1px solid #F0ECE3; font-size: 15px; }
+        .status-รอยืนยัน { color: #E67E22; font-weight: bold; }
+        .status-ยืนยันแล้ว { color: #27AE60; font-weight: bold; }
+        .status-ยกเลิก { color: #C0392B; font-weight: bold; }
+        button { background: #8B7D7B; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+        .btn-cancel { background: #E0E0E0; color: #666; margin-left: 5px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>รายการนัดหมาย CardioPlus Clinic</h1>
+        <table>
+            <thead>
+                <tr>
+                    <th>คนไข้</th>
+                    <th>บริการ</th>
+                    <th>นัดหมาย</th>
+                    <th>สถานะ</th>
+                    <th>จัดการ</th>
+                </tr>
+            </thead>
+            <tbody id="bookingList"></tbody>
+        </table>
+    </div>
+</body>
+</html>
