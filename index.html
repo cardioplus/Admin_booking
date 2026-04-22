@@ -4,24 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin - CardioPlus Clinic</title>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500&display=swap" rel="stylesheet">
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-        const firebaseConfig = { apiKey: "AIzaSyDOECJizIo7TtDn832EVBgDF4pnrAsq2v8",
+        const firebaseConfig = { 
+            apiKey: "AIzaSyDOECJizIo7TtDn832EVBgDF4pnrAsq2v8",
             authDomain: "cardioplus-booking.firebaseapp.com",
             projectId: "cardioplus-booking",
             storageBucket: "cardioplus-booking.firebasestorage.app",
             messagingSenderId: "140447979267",
-            appId: "1:140447979267:web:cdd8feebd1d372f43abb36" };
+            appId: "1:140447979267:web:cdd8feebd1d372f43abb36" 
+        };
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
         // ฟังก์ชันอัปเดตสถานะคิว
         window.updateStatus = async (id, newStatus) => {
-            const docRef = doc(db, "appointments", id);
-            await updateDoc(docRef, { status: newStatus });
+            if(confirm(`ต้องการเปลี่ยนสถานะเป็น "${newStatus}" ใช่หรือไม่?`)) {
+                const docRef = doc(db, "appointments", id);
+                await updateDoc(docRef, { status: newStatus });
+            }
         };
 
         async function initAdmin() {
@@ -29,27 +34,57 @@
             if (!liff.isLoggedIn()) { liff.login(); return; }
             
             const profile = await liff.getProfile();
-            // ตรวจสอบสิทธิ์เบื้องต้น (ใส่ User ID ของคุณหมอที่นี่)
-            const adminList = ["pornanong_o", "fainattha", "fanatfai",, "cardioplus"];
+            
+            // ⚠️ คำเตือน: Admin List ต้องใช้ "LINE User ID" ที่ขึ้นต้นด้วยตัว U เท่านั้น (ไม่ใช่ LINE ID ที่ใช้แอดเพื่อน)
+            // ชั่วคราว: ผมปิดการบล็อกสิทธิ์ไว้ก่อน เพื่อให้คุณหมอทดสอบระบบได้ ถ้าต้องการบล็อกให้เอาเครื่องหมาย // ออกครับ
+            /*
+            const adminList = ["U1234567890abcdef...", "U0987654321fedcba..."];
             if (!adminList.includes(profile.userId)) {
                 alert("คุณไม่มีสิทธิ์เข้าถึงหน้านี้");
                 liff.closeWindow();
+                return;
             }
+            */
 
-            // ดึงข้อมูลแบบ Real-time
-            const q = query(collection(db, "appointments"), orderBy("timestamp", "desc"));
+            // ดึงข้อมูลแบบ Real-time (ใช้ createdAt ให้ตรงกับโค้ดหน้าจองคิว)
+            const q = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
+            
             onSnapshot(q, (snapshot) => {
                 const tbody = document.getElementById("bookingList");
                 tbody.innerHTML = "";
+                
                 snapshot.forEach((doc) => {
                     const data = doc.data();
-                    const date = new Date(data.timestamp.seconds * 1000).toLocaleDateString('th-TH');
+                    
+                    // ป้องกัน Error กรณีข้อมูลเก่าไม่มีบางฟิลด์
+                    const phone = data.phoneNumber || 'ไม่มีเบอร์โทร';
+                    const userId = data.userId || 'ไม่มีข้อมูล';
+                    const status = data.status || 'รอยืนยัน';
+                    const bDate = data.bookDate || '-';
+                    const bTime = data.bookTime || '-';
+                    
+                    // แปลงวันที่กดจอง
+                    let submitDate = "-";
+                    if(data.createdAt && data.createdAt.seconds) {
+                        submitDate = new Date(data.createdAt.seconds * 1000).toLocaleDateString('th-TH');
+                    }
+
                     tbody.innerHTML += `
                         <tr>
-                            <td>${data.patientName}</td>
-                            <td>${data.service}</td>
-                            <td>${data.date} / ${data.time}</td>
-                            <td><span class="status-${data.status}">${data.status}</span></td>
+                            <td>
+                                <strong style="color: #4a4a4a; font-size: 16px;">${data.patientName}</strong><br>
+                                <span style="font-size: 13px; color: #666;">📞 ${phone}</span><br>
+                                <span style="font-size: 11px; color: #aaa;" title="${userId}">ID: ${userId.substring(0, 10)}...</span>
+                            </td>
+                            <td>
+                                <span>${data.service}</span><br>
+                                <span style="font-size: 11px; color: #aaa;">กดจองเมื่อ: ${submitDate}</span>
+                            </td>
+                            <td>
+                                <strong>${bDate}</strong><br>
+                                <span style="color: #8B7D7B;">เวลา ${bTime} น.</span>
+                            </td>
+                            <td><span class="status-${status}">${status}</span></td>
                             <td>
                                 <button onclick="updateStatus('${doc.id}', 'ยืนยันแล้ว')">ยืนยัน</button>
                                 <button class="btn-cancel" onclick="updateStatus('${doc.id}', 'ยกเลิก')">ยกเลิก</button>
@@ -62,33 +97,54 @@
         initAdmin();
     </script>
     <style>
-        body { font-family: 'Sarabun', sans-serif; background: #FAF9F6; padding: 30px; }
-        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); }
-        h1 { color: #8B7D7B; font-size: 24px; border-bottom: 2px solid #F0ECE3; padding-bottom: 10px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th { text-align: left; padding: 12px; border-bottom: 2px solid #F0ECE3; color: #8B7D7B; }
-        td { padding: 12px; border-bottom: 1px solid #F0ECE3; font-size: 15px; }
-        .status-รอยืนยัน { color: #E67E22; font-weight: bold; }
-        .status-ยืนยันแล้ว { color: #27AE60; font-weight: bold; }
-        .status-ยกเลิก { color: #C0392B; font-weight: bold; }
-        button { background: #8B7D7B; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+        body { 
+            font-family: 'Prompt', sans-serif; 
+            background: #FAF9F6; 
+            padding: 20px; 
+            margin: 0;
+        }
+        .card { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 2px 15px rgba(0,0,0,0.05); 
+            overflow-x: auto; /* เผื่อเปิดในมือถือจะได้เลื่อนซ้ายขวาได้ */
+        }
+        h1 { color: #8c7a6b; font-size: 22px; border-bottom: 2px solid #F0ECE3; padding-bottom: 15px; margin-top: 0;}
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; min-width: 700px; }
+        th { text-align: left; padding: 12px; border-bottom: 2px solid #F0ECE3; color: #8c7a6b; font-size: 15px; }
+        td { padding: 12px; border-bottom: 1px solid #F0ECE3; font-size: 14px; vertical-align: top; }
+        
+        .status-รอยืนยัน { color: #E67E22; background: #FEF5E7; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
+        .status-ยืนยันแล้ว { color: #27AE60; background: #E9F7EF; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
+        .status-ยกเลิก { color: #C0392B; background: #FDEDEC; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
+        
+        button { 
+            background: #8c7a6b; color: white; border: none; padding: 6px 12px; 
+            border-radius: 6px; cursor: pointer; font-family: 'Prompt'; font-size: 13px;
+            transition: 0.3s;
+        }
+        button:hover { background: #6b5b4c; }
         .btn-cancel { background: #E0E0E0; color: #666; margin-left: 5px; }
+        .btn-cancel:hover { background: #ccc; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>รายการนัดหมาย CardioPlus Clinic</h1>
+        <h1>🗓️ ระบบจัดการคิวนัดหมาย - CardioPlus Clinic</h1>
         <table>
             <thead>
                 <tr>
-                    <th>คนไข้</th>
-                    <th>บริการ</th>
-                    <th>นัดหมาย</th>
+                    <th>ข้อมูลคนไข้</th>
+                    <th>บริการที่จอง</th>
+                    <th>วัน/เวลานัดหมาย</th>
                     <th>สถานะ</th>
                     <th>จัดการ</th>
                 </tr>
             </thead>
-            <tbody id="bookingList"></tbody>
+            <tbody id="bookingList">
+                <tr><td colspan="5" style="text-align: center; color: #888;">กำลังโหลดข้อมูล...</td></tr>
+            </tbody>
         </table>
     </div>
 </body>
