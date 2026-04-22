@@ -21,6 +21,9 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        // ตัวแปรเก็บข้อมูลทั้งหมดจากฐานข้อมูล
+        let allAppointments = [];
+
         // ฟังก์ชันอัปเดตสถานะคิว
         window.updateStatus = async (id, newStatus) => {
             if(confirm(`ต้องการเปลี่ยนสถานะเป็น "${newStatus}" ใช่หรือไม่?`)) {
@@ -29,71 +32,89 @@
             }
         };
 
+        // ฟังก์ชันสำหรับวาดตารางและกรองข้อมูล
+        function renderTable() {
+            const filterValue = document.getElementById("filterStatus").value;
+            const tbody = document.getElementById("bookingList");
+            tbody.innerHTML = "";
+            
+            // กรองข้อมูลตามที่เลือกจาก Dropdown
+            const filteredData = allAppointments.filter(data => {
+                const status = data.status || 'รอยืนยัน';
+                if (filterValue === 'active') {
+                    return status === 'รอยืนยัน' || status === 'ยืนยันแล้ว';
+                } else if (filterValue === 'history') {
+                    return status === 'เสร็จสิ้น' || status === 'ยกเลิก';
+                }
+                return true; // กรณีเลือก 'all'
+            });
+
+            if (filteredData.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #888;">ไม่มีคิวนัดหมายในหมวดหมู่นี้</td></tr>`;
+                return;
+            }
+
+            filteredData.forEach((data) => {
+                const phone = data.phoneNumber || 'ไม่มีเบอร์โทร';
+                const userId = data.userId || 'ไม่มีข้อมูล';
+                const status = data.status || 'รอยืนยัน';
+                const bDate = data.bookDate || '-';
+                const bTime = data.bookTime || '-';
+                
+                let submitDate = "-";
+                if(data.createdAt && data.createdAt.seconds) {
+                    submitDate = new Date(data.createdAt.seconds * 1000).toLocaleDateString('th-TH');
+                }
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td>
+                            <strong style="color: #4a4a4a; font-size: 16px;">${data.patientName}</strong><br>
+                            <span style="font-size: 13px; color: #666;">📞 ${phone}</span><br>
+                            <span style="font-size: 11px; color: #aaa;" title="${userId}">ID: ${userId.substring(0, 10)}...</span>
+                        </td>
+                        <td>
+                            <span>${data.service}</span><br>
+                            <span style="font-size: 11px; color: #aaa;">กดจองเมื่อ: ${submitDate}</span>
+                        </td>
+                        <td>
+                            <strong>${bDate}</strong><br>
+                            <span style="color: #8B7D7B;">เวลา ${bTime} น.</span>
+                        </td>
+                        <td><span class="status-${status}">${status}</span></td>
+                        <td>
+                            <div style="margin-bottom: 5px;">
+                                <button onclick="updateStatus('${data.id}', 'ยืนยันแล้ว')">ยืนยัน</button>
+                                <button class="btn-done" onclick="updateStatus('${data.id}', 'เสร็จสิ้น')">ตรวจเสร็จ</button>
+                            </div>
+                            <div>
+                                <button class="btn-cancel" onclick="updateStatus('${data.id}', 'ยกเลิก')">ยกเลิกคิว</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+        }
+
+        // จับเหตุการณ์เมื่อเปลี่ยนตัวกรองให้โหลดตารางใหม่
+        document.getElementById("filterStatus").addEventListener("change", renderTable);
+
         async function initAdmin() {
             await liff.init({ liffId: "2009872099-Lm3zmKkH" });
             if (!liff.isLoggedIn()) { liff.login(); return; }
             
-            const profile = await liff.getProfile();
-            
-            // ⚠️ คำเตือน: Admin List ต้องใช้ "LINE User ID" ที่ขึ้นต้นด้วยตัว U เท่านั้น (ไม่ใช่ LINE ID ที่ใช้แอดเพื่อน)
-            // ชั่วคราว: ผมปิดการบล็อกสิทธิ์ไว้ก่อน เพื่อให้คุณหมอทดสอบระบบได้ ถ้าต้องการบล็อกให้เอาเครื่องหมาย // ออกครับ
-            /*
-            const adminList = ["U1234567890abcdef...", "U0987654321fedcba..."];
-            if (!adminList.includes(profile.userId)) {
-                alert("คุณไม่มีสิทธิ์เข้าถึงหน้านี้");
-                liff.closeWindow();
-                return;
-            }
-            */
-
-            // ดึงข้อมูลแบบ Real-time (ใช้ createdAt ให้ตรงกับโค้ดหน้าจองคิว)
+            // ดึงข้อมูลจาก Firebase ทันทีที่มีการเปลี่ยนแปลง
             const q = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
             
             onSnapshot(q, (snapshot) => {
-                const tbody = document.getElementById("bookingList");
-                tbody.innerHTML = "";
-                
+                allAppointments = [];
                 snapshot.forEach((doc) => {
-                    const data = doc.data();
-                    
-                    // ป้องกัน Error กรณีข้อมูลเก่าไม่มีบางฟิลด์
-                    const phone = data.phoneNumber || 'ไม่มีเบอร์โทร';
-                    const userId = data.userId || 'ไม่มีข้อมูล';
-                    const status = data.status || 'รอยืนยัน';
-                    const bDate = data.bookDate || '-';
-                    const bTime = data.bookTime || '-';
-                    
-                    // แปลงวันที่กดจอง
-                    let submitDate = "-";
-                    if(data.createdAt && data.createdAt.seconds) {
-                        submitDate = new Date(data.createdAt.seconds * 1000).toLocaleDateString('th-TH');
-                    }
-
-                    tbody.innerHTML += `
-                        <tr>
-                            <td>
-                                <strong style="color: #4a4a4a; font-size: 16px;">${data.patientName}</strong><br>
-                                <span style="font-size: 13px; color: #666;">📞 ${phone}</span><br>
-                                <span style="font-size: 11px; color: #aaa;" title="${userId}">ID: ${userId.substring(0, 10)}...</span>
-                            </td>
-                            <td>
-                                <span>${data.service}</span><br>
-                                <span style="font-size: 11px; color: #aaa;">กดจองเมื่อ: ${submitDate}</span>
-                            </td>
-                            <td>
-                                <strong>${bDate}</strong><br>
-                                <span style="color: #8B7D7B;">เวลา ${bTime} น.</span>
-                            </td>
-                            <td><span class="status-${status}">${status}</span></td>
-                            <td>
-                                <button onclick="updateStatus('${doc.id}', 'ยืนยันแล้ว')">ยืนยัน</button>
-                                <button class="btn-cancel" onclick="updateStatus('${doc.id}', 'ยกเลิก')">ยกเลิก</button>
-                            </td>
-                        </tr>
-                    `;
+                    allAppointments.push({ id: doc.id, ...doc.data() });
                 });
+                renderTable(); // สั่งให้วาดตารางใหม่ทุกครั้งที่ดึงข้อมูลเสร็จ
             });
         }
+        
         initAdmin();
     </script>
     <style>
@@ -108,15 +129,34 @@
             padding: 20px; 
             border-radius: 12px; 
             box-shadow: 0 2px 15px rgba(0,0,0,0.05); 
-            overflow-x: auto; /* เผื่อเปิดในมือถือจะได้เลื่อนซ้ายขวาได้ */
+            overflow-x: auto; 
         }
-        h1 { color: #8c7a6b; font-size: 22px; border-bottom: 2px solid #F0ECE3; padding-bottom: 15px; margin-top: 0;}
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; min-width: 700px; }
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #F0ECE3;
+            padding-bottom: 15px;
+            margin-bottom: 15px;
+        }
+        h1 { color: #8c7a6b; font-size: 22px; margin: 0;}
+        
+        .filter-box select {
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            font-family: 'Prompt';
+            font-size: 14px;
+            outline: none;
+        }
+
+        table { width: 100%; border-collapse: collapse; min-width: 750px; }
         th { text-align: left; padding: 12px; border-bottom: 2px solid #F0ECE3; color: #8c7a6b; font-size: 15px; }
         td { padding: 12px; border-bottom: 1px solid #F0ECE3; font-size: 14px; vertical-align: top; }
         
         .status-รอยืนยัน { color: #E67E22; background: #FEF5E7; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-ยืนยันแล้ว { color: #27AE60; background: #E9F7EF; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
+        .status-เสร็จสิ้น { color: #2980B9; background: #EAF2F8; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-ยกเลิก { color: #C0392B; background: #FDEDEC; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         
         button { 
@@ -125,13 +165,29 @@
             transition: 0.3s;
         }
         button:hover { background: #6b5b4c; }
-        .btn-cancel { background: #E0E0E0; color: #666; margin-left: 5px; }
+        
+        .btn-done { background: #3498DB; margin-left: 5px; }
+        .btn-done:hover { background: #2980B9; }
+        
+        .btn-cancel { background: #E0E0E0; color: #666; margin-top: 5px; width: 100%;}
         .btn-cancel:hover { background: #ccc; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h1>🗓️ ระบบจัดการคิวนัดหมาย - CardioPlus Clinic</h1>
+        <div class="header-container">
+            <h1>🗓️ ระบบจัดการคิวนัดหมาย - CardioPlus</h1>
+            
+            <div class="filter-box">
+                <label>📌 แสดงผล: </label>
+                <select id="filterStatus">
+                    <option value="active" selected>คิวปัจจุบัน (รอ / ยืนยัน)</option>
+                    <option value="history">ประวัติย้อนหลัง (เสร็จสิ้น / ยกเลิก)</option>
+                    <option value="all">ดูทั้งหมด</option>
+                </select>
+            </div>
+        </div>
+
         <table>
             <thead>
                 <tr>
@@ -139,7 +195,7 @@
                     <th>บริการที่จอง</th>
                     <th>วัน/เวลานัดหมาย</th>
                     <th>สถานะ</th>
-                    <th>จัดการ</th>
+                    <th style="width: 150px;">จัดการ</th>
                 </tr>
             </thead>
             <tbody id="bookingList">
