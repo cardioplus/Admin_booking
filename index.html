@@ -8,7 +8,8 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, deleteDoc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-storage.js";
 
         const firebaseConfig = { 
             apiKey: "AIzaSyDOECJizIo7TtDn832EVBgDF4pnrAsq2v8",
@@ -20,11 +21,63 @@
         };
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
+        const storage = getStorage(app);
 
         let allAppointments = [];
         let allClosedDates = [];
 
-        // ฟังก์ชันอัปเดตสถานะ (ตารางคิว)
+        // --- ส่วนจัดการภาพตารางแพทย์ ---
+        async function loadScheduleImage() {
+            try {
+                const docRef = doc(db, "settings", "schedule");
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists() && docSnap.data().imageUrl) {
+                    const imgEl = document.getElementById("currentScheduleImg");
+                    imgEl.src = docSnap.data().imageUrl;
+                    imgEl.style.display = "block";
+                    document.getElementById("noImageText").style.display = "none";
+                }
+            } catch (error) {
+                console.error("Error loading image:", error);
+            }
+        }
+
+        window.uploadSchedule = async () => {
+            const fileInput = document.getElementById("scheduleImage");
+            const file = fileInput.files[0];
+            if (!file) {
+                alert("กรุณาเลือกไฟล์ภาพตารางออกตรวจก่อนครับ");
+                return;
+            }
+
+            const uploadBtn = document.getElementById("uploadBtn");
+            uploadBtn.innerText = "กำลังอัปโหลด...";
+            uploadBtn.disabled = true;
+
+            try {
+                // อัปโหลดไฟล์ไปที่ Firebase Storage (เขียนทับไฟล์เดิมเสมอ)
+                const storageRef = sRef(storage, 'schedules/current_schedule');
+                await uploadBytes(storageRef, file);
+                
+                // ดึง URL ของภาพที่อัปโหลดเสร็จ
+                const url = await getDownloadURL(storageRef);
+
+                // บันทึก URL ลง Firestore เพื่อให้หน้าลูกค้าดึงไปโชว์
+                await setDoc(doc(db, "settings", "schedule"), { imageUrl: url, updatedAt: new Date() });
+
+                alert("อัปโหลดภาพตารางสำเร็จ!");
+                loadScheduleImage();
+                fileInput.value = "";
+            } catch (error) {
+                console.error("Upload error:", error);
+                alert("เกิดข้อผิดพลาด! กรุณาตรวจสอบว่าเปิดสิทธิ์ Storage Rules แล้วหรือยัง");
+            } finally {
+                uploadBtn.innerText = "อัปโหลดภาพใหม่";
+                uploadBtn.disabled = false;
+            }
+        };
+
+        // --- ส่วนจัดการคิว (Appointments) ---
         window.updateStatus = async (id, newStatus) => {
             if(confirm(`ต้องการเปลี่ยนสถานะเป็น "${newStatus}" ใช่หรือไม่?`)) {
                 const docRef = doc(db, "appointments", id);
@@ -53,8 +106,8 @@
             }
 
             filteredData.forEach((data) => {
-                const phone = data.phoneNumber || 'ไม่มีเบอร์โทร';
-                const userId = data.userId || 'ไม่มีข้อมูล';
+                const phone = data.phoneNumber || '-';
+                const userId = data.userId || '-';
                 const status = data.status || 'รอยืนยัน';
                 const bDate = data.bookDate || '-';
                 const bTime = data.bookTime || '-';
@@ -102,7 +155,7 @@
 
         document.getElementById("filterStatus").addEventListener("change", renderTable);
 
-        // เช็คว่าวันที่เลือกเป็นเสาร์-อาทิตย์ไหม เพื่อโชว์ Dropdown เวลา
+        // --- ส่วนจัดการวันหยุด (Closed Dates) ---
         document.getElementById("holidayInput").addEventListener("change", (e) => {
             const dateStr = e.target.value;
             const periodSelect = document.getElementById("holidayPeriod");
@@ -122,7 +175,6 @@
             }
         });
 
-        // ฟังก์ชันเพิ่มวันหยุด (พร้อมช่วงเวลา)
         window.addHoliday = async () => {
             const dateInput = document.getElementById("holidayInput").value;
             const periodInput = document.getElementById("holidayPeriod").value;
@@ -132,35 +184,23 @@
                 return;
             }
 
-            // เช็คว่ามีการตั้งค่าในวันนี้ไปแล้วหรือยัง
             if (allClosedDates.some(d => d.date === dateInput)) {
-                alert("วันที่นี้มีการตั้งค่าวันหยุดไว้แล้ว หากต้องการเปลี่ยนช่วงเวลา กรุณาลบลายการเดิมออกก่อนครับ");
+                alert("วันที่นี้มีการตั้งค่าวันหยุดไว้แล้วครับ");
                 return;
             }
 
             try {
-                await addDoc(collection(db, "closedDates"), { 
-                    date: dateInput,
-                    period: periodInput // "all", "morning", หรือ "evening"
-                });
-                
-                // Reset ค่ากลับ
+                await addDoc(collection(db, "closedDates"), { date: dateInput, period: periodInput });
                 document.getElementById("holidayInput").value = ""; 
                 document.getElementById("holidayPeriod").style.display = "none";
             } catch (error) {
                 console.error("Error adding holiday:", error);
-                alert("เกิดข้อผิดพลาดในการบันทึกวันหยุด");
             }
         };
 
         window.removeHoliday = async (id) => {
             if (confirm("ต้องการลบวันหยุดนี้ และเปิดให้จองคิวตามปกติใช่หรือไม่?")) {
-                try {
-                    await deleteDoc(doc(db, "closedDates", id));
-                } catch (error) {
-                    console.error("Error removing holiday:", error);
-                    alert("เกิดข้อผิดพลาดในการลบวันหยุด");
-                }
+                await deleteDoc(doc(db, "closedDates", id));
             }
         };
 
@@ -196,10 +236,14 @@
             });
         }
 
+        // --- Init System ---
         async function initAdmin() {
             await liff.init({ liffId: "2009872099-Lm3zmKkH" });
             if (!liff.isLoggedIn()) { liff.login(); return; }
             
+            // โหลดภาพปัจจุบัน
+            loadScheduleImage();
+
             const qAppointments = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
             onSnapshot(qAppointments, (snapshot) => {
                 allAppointments = [];
@@ -222,42 +266,24 @@
         initAdmin();
     </script>
     <style>
-        body { 
-            font-family: 'Prompt', sans-serif; 
-            background: #FAF9F6; 
-            padding: 20px; 
-            margin: 0;
-            color: #4a4a4a;
-        }
+        body { font-family: 'Prompt', sans-serif; background: #FAF9F6; padding: 20px; margin: 0; color: #4a4a4a; }
         .container { max-width: 1000px; margin: 0 auto; }
-        .card { 
-            background: white; padding: 20px; border-radius: 12px; 
-            box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px;
-        }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .table-card { overflow-x: auto; }
-        .header-container {
-            display: flex; justify-content: space-between; align-items: center;
-            border-bottom: 2px solid #F0ECE3; padding-bottom: 15px; margin-bottom: 15px;
-        }
+        .header-container { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #F0ECE3; padding-bottom: 15px; margin-bottom: 15px; }
         h1, h2 { color: #8c7a6b; margin: 0;}
         h1 { font-size: 22px; }
         h2 { font-size: 18px; border-bottom: 2px solid #F0ECE3; padding-bottom: 10px; margin-bottom: 15px;}
         
-        input[type="date"], select {
+        input[type="date"], select, input[type="file"] {
             padding: 8px 12px; border-radius: 6px; border: 1px solid #e0dcd3;
-            font-family: 'Prompt'; font-size: 14px; outline: none;
-            background-color: #faf9f7; color: #4a4a4a;
+            font-family: 'Prompt'; font-size: 14px; outline: none; background-color: #faf9f7; color: #4a4a4a;
         }
         input[type="date"]:focus, select:focus { border-color: #8c7a6b; }
 
         .holiday-setup { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; flex-wrap: wrap;}
-        .holiday-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;
-        }
-        .holiday-item {
-            background: #fdfaf8; border: 1px solid #e0dcd3; padding: 10px 15px;
-            border-radius: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 14px;
-        }
+        .holiday-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+        .holiday-item { background: #fdfaf8; border: 1px solid #e0dcd3; padding: 10px 15px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
 
         table { width: 100%; border-collapse: collapse; min-width: 750px; }
         th { text-align: left; padding: 12px; border-bottom: 2px solid #F0ECE3; color: #8c7a6b; font-size: 15px; }
@@ -268,10 +294,7 @@
         .status-เสร็จสิ้น { color: #2980B9; background: #EAF2F8; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-ยกเลิก { color: #C0392B; background: #FDEDEC; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         
-        button { 
-            background: #8c7a6b; color: white; border: none; padding: 8px 12px; 
-            border-radius: 6px; cursor: pointer; font-family: 'Prompt'; font-size: 13px; transition: 0.3s;
-        }
+        button { background: #8c7a6b; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-family: 'Prompt'; font-size: 13px; transition: 0.3s; }
         button:hover { background: #6b5b4c; }
         
         .btn-done { background: #3498DB; margin-left: 5px; }
@@ -284,18 +307,30 @@
 </head>
 <body>
     <div class="container">
+        
+        <div class="card">
+            <h2>🖼️ จัดการภาพตารางออกตรวจ</h2>
+            <div class="holiday-setup">
+                <input type="file" id="scheduleImage" accept="image/*">
+                <button onclick="uploadSchedule()" id="uploadBtn">อัปโหลดภาพใหม่</button>
+            </div>
+            <div style="margin-top: 15px; padding: 15px; background: #faf9f7; border-radius: 8px; border: 1px dashed #e0dcd3; text-align: center;">
+                <p style="font-size: 14px; margin-top: 0; color: #6b5b4c;">ภาพตารางปัจจุบัน (ที่จะแสดงให้ลูกค้าเห็น)</p>
+                <div id="noImageText" style="color: #aaa; font-size: 13px;">ยังไม่มีการอัปโหลดภาพ</div>
+                <img id="currentScheduleImg" src="" style="max-width: 100%; max-height: 300px; display: none; border-radius: 8px; margin: 0 auto;">
+            </div>
+        </div>
+
         <div class="card">
             <h2>🛑 ตั้งค่าวันหยุดคลินิก (ปิดรับจองคิว)</h2>
             <div class="holiday-setup">
                 <label style="font-size: 14px;">เลือกวันที่ต้องการปิด:</label>
                 <input type="date" id="holidayInput">
-                
                 <select id="holidayPeriod" style="display: none;">
                     <option value="all">ปิดทั้งวัน</option>
                     <option value="morning">ปิดเฉพาะช่วงเช้า (08.30 - 12.00)</option>
                     <option value="evening">ปิดเฉพาะช่วงเย็น (17.00 - 20.00)</option>
                 </select>
-
                 <button onclick="addHoliday()">+ เพิ่มวันหยุด</button>
             </div>
             <div id="holidayList" class="holiday-grid">
