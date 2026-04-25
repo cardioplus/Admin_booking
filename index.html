@@ -8,7 +8,7 @@
     <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
         const firebaseConfig = { 
             apiKey: "AIzaSyDOECJizIo7TtDn832EVBgDF4pnrAsq2v8",
@@ -21,10 +21,13 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // ตัวแปรเก็บข้อมูลทั้งหมดจากฐานข้อมูล
+        // ตัวแปรเก็บข้อมูล
         let allAppointments = [];
+        let allClosedDates = [];
 
-        // ฟังก์ชันอัปเดตสถานะคิว
+        // ---------------------------------------------------
+        // ส่วนจัดการนัดหมาย (Appointments)
+        // ---------------------------------------------------
         window.updateStatus = async (id, newStatus) => {
             if(confirm(`ต้องการเปลี่ยนสถานะเป็น "${newStatus}" ใช่หรือไม่?`)) {
                 const docRef = doc(db, "appointments", id);
@@ -32,13 +35,11 @@
             }
         };
 
-        // ฟังก์ชันสำหรับวาดตารางและกรองข้อมูล
         function renderTable() {
             const filterValue = document.getElementById("filterStatus").value;
             const tbody = document.getElementById("bookingList");
             tbody.innerHTML = "";
             
-            // กรองข้อมูลตามที่เลือกจาก Dropdown
             const filteredData = allAppointments.filter(data => {
                 const status = data.status || 'รอยืนยัน';
                 if (filterValue === 'active') {
@@ -46,11 +47,11 @@
                 } else if (filterValue === 'history') {
                     return status === 'เสร็จสิ้น' || status === 'ยกเลิก';
                 }
-                return true; // กรณีเลือก 'all'
+                return true; 
             });
 
             if (filteredData.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #888;">ไม่มีคิวนัดหมายในหมวดหมู่นี้</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #888; padding: 20px;">ไม่มีคิวนัดหมายในหมวดหมู่นี้</td></tr>`;
                 return;
             }
 
@@ -66,6 +67,13 @@
                     submitDate = new Date(data.createdAt.seconds * 1000).toLocaleDateString('th-TH');
                 }
 
+                // แปลงรูปแบบวันที่ให้อ่านง่ายขึ้น
+                let displayDate = bDate;
+                if(bDate !== '-') {
+                    const [y, m, d] = bDate.split('-');
+                    displayDate = `${d}/${m}/${y}`;
+                }
+
                 tbody.innerHTML += `
                     <tr>
                         <td>
@@ -78,7 +86,7 @@
                             <span style="font-size: 11px; color: #aaa;">กดจองเมื่อ: ${submitDate}</span>
                         </td>
                         <td>
-                            <strong>${bDate}</strong><br>
+                            <strong>${displayDate}</strong><br>
                             <span style="color: #8B7D7B;">เวลา ${bTime} น.</span>
                         </td>
                         <td><span class="status-${status}">${status}</span></td>
@@ -96,22 +104,91 @@
             });
         }
 
-        // จับเหตุการณ์เมื่อเปลี่ยนตัวกรองให้โหลดตารางใหม่
         document.getElementById("filterStatus").addEventListener("change", renderTable);
 
+        // ---------------------------------------------------
+        // ส่วนจัดการวันหยุด (Closed Dates)
+        // ---------------------------------------------------
+        window.addHoliday = async () => {
+            const dateInput = document.getElementById("holidayInput").value;
+            if (!dateInput) {
+                alert("กรุณาเลือกวันที่ต้องการตั้งเป็นวันหยุด");
+                return;
+            }
+
+            // เช็คว่ามีวันที่นี้ในระบบแล้วหรือยัง
+            if (allClosedDates.some(d => d.date === dateInput)) {
+                alert("วันที่นี้ถูกตั้งเป็นวันหยุดไว้แล้วครับ");
+                return;
+            }
+
+            try {
+                await addDoc(collection(db, "closedDates"), { date: dateInput });
+                document.getElementById("holidayInput").value = ""; // ล้างค่าหลังบันทึก
+            } catch (error) {
+                console.error("Error adding holiday:", error);
+                alert("เกิดข้อผิดพลาดในการบันทึกวันหยุด");
+            }
+        };
+
+        window.removeHoliday = async (id) => {
+            if (confirm("ต้องการลบวันหยุดนี้ และเปิดให้จองคิวตามปกติใช่หรือไม่?")) {
+                try {
+                    await deleteDoc(doc(db, "closedDates", id));
+                } catch (error) {
+                    console.error("Error removing holiday:", error);
+                    alert("เกิดข้อผิดพลาดในการลบวันหยุด");
+                }
+            }
+        };
+
+        function renderHolidays() {
+            const listEl = document.getElementById("holidayList");
+            listEl.innerHTML = "";
+            
+            if (allClosedDates.length === 0) {
+                listEl.innerHTML = "<div style='color: #aaa; font-size: 13px;'>ยังไม่มีการตั้งค่าว้นหยุดคลินิก</div>";
+                return;
+            }
+
+            allClosedDates.forEach(item => {
+                const [y, m, d] = item.date.split('-');
+                const displayDate = `${d}/${m}/${y}`;
+                listEl.innerHTML += `
+                    <div class="holiday-item">
+                        <span>วันที่ปิดทำการ: <strong>${displayDate}</strong></span>
+                        <button class="btn-cancel-sm" onclick="removeHoliday('${item.id}')">ลบ</button>
+                    </div>
+                `;
+            });
+        }
+
+
+        // ---------------------------------------------------
+        // Init System
+        // ---------------------------------------------------
         async function initAdmin() {
             await liff.init({ liffId: "2009872099-Lm3zmKkH" });
             if (!liff.isLoggedIn()) { liff.login(); return; }
             
-            // ดึงข้อมูลจาก Firebase ทันทีที่มีการเปลี่ยนแปลง
-            const q = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
-            
-            onSnapshot(q, (snapshot) => {
+            // ดึงข้อมูลคิวแบบ Real-time
+            const qAppointments = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
+            onSnapshot(qAppointments, (snapshot) => {
                 allAppointments = [];
                 snapshot.forEach((doc) => {
                     allAppointments.push({ id: doc.id, ...doc.data() });
                 });
-                renderTable(); // สั่งให้วาดตารางใหม่ทุกครั้งที่ดึงข้อมูลเสร็จ
+                renderTable(); 
+            });
+
+            // ดึงข้อมูลวันหยุดแบบ Real-time
+            const qClosed = query(collection(db, "closedDates"), orderBy("date", "asc"));
+            onSnapshot(qClosed, (snapshot) => {
+                allClosedDates = [];
+                snapshot.forEach((doc) => {
+                    allClosedDates.push({ id: doc.id, ...doc.data() });
+                });
+                renderHolidays();
             });
         }
         
@@ -123,12 +200,20 @@
             background: #FAF9F6; 
             padding: 20px; 
             margin: 0;
+            color: #4a4a4a;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
         }
         .card { 
             background: white; 
             padding: 20px; 
             border-radius: 12px; 
             box-shadow: 0 2px 15px rgba(0,0,0,0.05); 
+            margin-bottom: 20px;
+        }
+        .table-card {
             overflow-x: auto; 
         }
         .header-container {
@@ -139,26 +224,58 @@
             padding-bottom: 15px;
             margin-bottom: 15px;
         }
-        h1 { color: #8c7a6b; font-size: 22px; margin: 0;}
+        h1, h2 { color: #8c7a6b; margin: 0;}
+        h1 { font-size: 22px; }
+        h2 { font-size: 18px; border-bottom: 2px solid #F0ECE3; padding-bottom: 10px; margin-bottom: 15px;}
         
-        .filter-box select {
-            padding: 8px;
+        /* Input & Select */
+        input[type="date"], select {
+            padding: 8px 12px;
             border-radius: 6px;
-            border: 1px solid #ccc;
+            border: 1px solid #e0dcd3;
             font-family: 'Prompt';
             font-size: 14px;
             outline: none;
+            background-color: #faf9f7;
+            color: #4a4a4a;
+        }
+        input[type="date"]:focus, select:focus { border-color: #8c7a6b; }
+
+        /* Holiday Section */
+        .holiday-setup {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+        .holiday-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 10px;
+        }
+        .holiday-item {
+            background: #fdfaf8;
+            border: 1px solid #e0dcd3;
+            padding: 10px 15px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
         }
 
+        /* Table */
         table { width: 100%; border-collapse: collapse; min-width: 750px; }
         th { text-align: left; padding: 12px; border-bottom: 2px solid #F0ECE3; color: #8c7a6b; font-size: 15px; }
         td { padding: 12px; border-bottom: 1px solid #F0ECE3; font-size: 14px; vertical-align: top; }
         
+        /* Status Badges */
         .status-รอยืนยัน { color: #E67E22; background: #FEF5E7; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-ยืนยันแล้ว { color: #27AE60; background: #E9F7EF; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-เสร็จสิ้น { color: #2980B9; background: #EAF2F8; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-ยกเลิก { color: #C0392B; background: #FDEDEC; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         
+        /* Buttons */
         button { 
             background: #8c7a6b; color: white; border: none; padding: 6px 12px; 
             border-radius: 6px; cursor: pointer; font-family: 'Prompt'; font-size: 13px;
@@ -171,37 +288,54 @@
         
         .btn-cancel { background: #E0E0E0; color: #666; margin-top: 5px; width: 100%;}
         .btn-cancel:hover { background: #ccc; }
+
+        .btn-cancel-sm { background: #E0E0E0; color: #C0392B; padding: 4px 10px; font-size: 12px; }
+        .btn-cancel-sm:hover { background: #C0392B; color: white; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <div class="header-container">
-            <h1>🗓️ ระบบจัดการคิวนัดหมาย - CardioPlus</h1>
-            
-            <div class="filter-box">
-                <label>📌 แสดงผล: </label>
-                <select id="filterStatus">
-                    <option value="active" selected>คิวปัจจุบัน (รอ / ยืนยัน)</option>
-                    <option value="history">ประวัติย้อนหลัง (เสร็จสิ้น / ยกเลิก)</option>
-                    <option value="all">ดูทั้งหมด</option>
-                </select>
+    <div class="container">
+        <div class="card">
+            <h2>🛑 ตั้งค่าวันหยุดคลินิก (ปิดรับจองคิว)</h2>
+            <div class="holiday-setup">
+                <label style="font-size: 14px;">เลือกวันที่ต้องการปิด:</label>
+                <input type="date" id="holidayInput">
+                <button onclick="addHoliday()">+ เพิ่มวันหยุด</button>
+            </div>
+            <div id="holidayList" class="holiday-grid">
+                <div style='color: #888; font-size: 13px;'>กำลังโหลดข้อมูลวันหยุด...</div>
             </div>
         </div>
 
-        <table>
-            <thead>
-                <tr>
-                    <th>ข้อมูลคนไข้</th>
-                    <th>บริการที่จอง</th>
-                    <th>วัน/เวลานัดหมาย</th>
-                    <th>สถานะ</th>
-                    <th style="width: 150px;">จัดการ</th>
-                </tr>
-            </thead>
-            <tbody id="bookingList">
-                <tr><td colspan="5" style="text-align: center; color: #888;">กำลังโหลดข้อมูล...</td></tr>
-            </tbody>
-        </table>
+        <div class="card table-card">
+            <div class="header-container">
+                <h1>🗓️ ระบบจัดการคิวนัดหมาย - CardioPlus</h1>
+                
+                <div class="filter-box">
+                    <label style="font-size: 14px;">📌 แสดงผล: </label>
+                    <select id="filterStatus">
+                        <option value="active" selected>คิวปัจจุบัน (รอ / ยืนยัน)</option>
+                        <option value="history">ประวัติย้อนหลัง (เสร็จสิ้น / ยกเลิก)</option>
+                        <option value="all">ดูทั้งหมด</option>
+                    </select>
+                </div>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>ข้อมูลคนไข้</th>
+                        <th>บริการที่จอง</th>
+                        <th>วัน/เวลานัดหมาย</th>
+                        <th>สถานะ</th>
+                        <th style="width: 150px;">จัดการ</th>
+                    </tr>
+                </thead>
+                <tbody id="bookingList">
+                    <tr><td colspan="5" style="text-align: center; color: #888; padding: 20px;">กำลังโหลดข้อมูล...</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
 </body>
 </html>
