@@ -21,13 +21,10 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        // ตัวแปรเก็บข้อมูล
         let allAppointments = [];
         let allClosedDates = [];
 
-        // ---------------------------------------------------
-        // ส่วนจัดการนัดหมาย (Appointments)
-        // ---------------------------------------------------
+        // ฟังก์ชันอัปเดตสถานะ (ตารางคิว)
         window.updateStatus = async (id, newStatus) => {
             if(confirm(`ต้องการเปลี่ยนสถานะเป็น "${newStatus}" ใช่หรือไม่?`)) {
                 const docRef = doc(db, "appointments", id);
@@ -67,7 +64,6 @@
                     submitDate = new Date(data.createdAt.seconds * 1000).toLocaleDateString('th-TH');
                 }
 
-                // แปลงรูปแบบวันที่ให้อ่านง่ายขึ้น
                 let displayDate = bDate;
                 if(bDate !== '-') {
                     const [y, m, d] = bDate.split('-');
@@ -106,25 +102,51 @@
 
         document.getElementById("filterStatus").addEventListener("change", renderTable);
 
-        // ---------------------------------------------------
-        // ส่วนจัดการวันหยุด (Closed Dates)
-        // ---------------------------------------------------
+        // เช็คว่าวันที่เลือกเป็นเสาร์-อาทิตย์ไหม เพื่อโชว์ Dropdown เวลา
+        document.getElementById("holidayInput").addEventListener("change", (e) => {
+            const dateStr = e.target.value;
+            const periodSelect = document.getElementById("holidayPeriod");
+            if(!dateStr) {
+                periodSelect.style.display = "none";
+                return;
+            }
+            const dateObj = new Date(dateStr);
+            const day = dateObj.getDay();
+            
+            if(day === 0 || day === 6) { 
+                periodSelect.style.display = "inline-block";
+                periodSelect.value = "all";
+            } else { 
+                periodSelect.style.display = "none";
+                periodSelect.value = "all"; 
+            }
+        });
+
+        // ฟังก์ชันเพิ่มวันหยุด (พร้อมช่วงเวลา)
         window.addHoliday = async () => {
             const dateInput = document.getElementById("holidayInput").value;
+            const periodInput = document.getElementById("holidayPeriod").value;
+
             if (!dateInput) {
                 alert("กรุณาเลือกวันที่ต้องการตั้งเป็นวันหยุด");
                 return;
             }
 
-            // เช็คว่ามีวันที่นี้ในระบบแล้วหรือยัง
+            // เช็คว่ามีการตั้งค่าในวันนี้ไปแล้วหรือยัง
             if (allClosedDates.some(d => d.date === dateInput)) {
-                alert("วันที่นี้ถูกตั้งเป็นวันหยุดไว้แล้วครับ");
+                alert("วันที่นี้มีการตั้งค่าวันหยุดไว้แล้ว หากต้องการเปลี่ยนช่วงเวลา กรุณาลบลายการเดิมออกก่อนครับ");
                 return;
             }
 
             try {
-                await addDoc(collection(db, "closedDates"), { date: dateInput });
-                document.getElementById("holidayInput").value = ""; // ล้างค่าหลังบันทึก
+                await addDoc(collection(db, "closedDates"), { 
+                    date: dateInput,
+                    period: periodInput // "all", "morning", หรือ "evening"
+                });
+                
+                // Reset ค่ากลับ
+                document.getElementById("holidayInput").value = ""; 
+                document.getElementById("holidayPeriod").style.display = "none";
             } catch (error) {
                 console.error("Error adding holiday:", error);
                 alert("เกิดข้อผิดพลาดในการบันทึกวันหยุด");
@@ -151,27 +173,33 @@
                 return;
             }
 
+            const periodTextMap = {
+                "all": "ปิดทั้งวัน",
+                "morning": "ปิดเฉพาะช่วงเช้า (08.30 - 12.00)",
+                "evening": "ปิดเฉพาะช่วงเย็น (17.00 - 20.00)"
+            };
+
             allClosedDates.forEach(item => {
                 const [y, m, d] = item.date.split('-');
                 const displayDate = `${d}/${m}/${y}`;
+                const pText = periodTextMap[item.period || "all"];
+
                 listEl.innerHTML += `
                     <div class="holiday-item">
-                        <span>วันที่ปิดทำการ: <strong>${displayDate}</strong></span>
+                        <div>
+                            <span>วันที่ปิด: <strong>${displayDate}</strong></span><br>
+                            <span style="font-size: 12px; color: #d35400;">* ${pText}</span>
+                        </div>
                         <button class="btn-cancel-sm" onclick="removeHoliday('${item.id}')">ลบ</button>
                     </div>
                 `;
             });
         }
 
-
-        // ---------------------------------------------------
-        // Init System
-        // ---------------------------------------------------
         async function initAdmin() {
             await liff.init({ liffId: "2009872099-Lm3zmKkH" });
             if (!liff.isLoggedIn()) { liff.login(); return; }
             
-            // ดึงข้อมูลคิวแบบ Real-time
             const qAppointments = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
             onSnapshot(qAppointments, (snapshot) => {
                 allAppointments = [];
@@ -181,7 +209,6 @@
                 renderTable(); 
             });
 
-            // ดึงข้อมูลวันหยุดแบบ Real-time
             const qClosed = query(collection(db, "closedDates"), orderBy("date", "asc"));
             onSnapshot(qClosed, (snapshot) => {
                 allClosedDates = [];
@@ -202,93 +229,55 @@
             margin: 0;
             color: #4a4a4a;
         }
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-        }
+        .container { max-width: 1000px; margin: 0 auto; }
         .card { 
-            background: white; 
-            padding: 20px; 
-            border-radius: 12px; 
-            box-shadow: 0 2px 15px rgba(0,0,0,0.05); 
-            margin-bottom: 20px;
+            background: white; padding: 20px; border-radius: 12px; 
+            box-shadow: 0 2px 15px rgba(0,0,0,0.05); margin-bottom: 20px;
         }
-        .table-card {
-            overflow-x: auto; 
-        }
+        .table-card { overflow-x: auto; }
         .header-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 2px solid #F0ECE3;
-            padding-bottom: 15px;
-            margin-bottom: 15px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 2px solid #F0ECE3; padding-bottom: 15px; margin-bottom: 15px;
         }
         h1, h2 { color: #8c7a6b; margin: 0;}
         h1 { font-size: 22px; }
         h2 { font-size: 18px; border-bottom: 2px solid #F0ECE3; padding-bottom: 10px; margin-bottom: 15px;}
         
-        /* Input & Select */
         input[type="date"], select {
-            padding: 8px 12px;
-            border-radius: 6px;
-            border: 1px solid #e0dcd3;
-            font-family: 'Prompt';
-            font-size: 14px;
-            outline: none;
-            background-color: #faf9f7;
-            color: #4a4a4a;
+            padding: 8px 12px; border-radius: 6px; border: 1px solid #e0dcd3;
+            font-family: 'Prompt'; font-size: 14px; outline: none;
+            background-color: #faf9f7; color: #4a4a4a;
         }
         input[type="date"]:focus, select:focus { border-color: #8c7a6b; }
 
-        /* Holiday Section */
-        .holiday-setup {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 15px;
-            align-items: center;
-        }
+        .holiday-setup { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; flex-wrap: wrap;}
         .holiday-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 10px;
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px;
         }
         .holiday-item {
-            background: #fdfaf8;
-            border: 1px solid #e0dcd3;
-            padding: 10px 15px;
-            border-radius: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 14px;
+            background: #fdfaf8; border: 1px solid #e0dcd3; padding: 10px 15px;
+            border-radius: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 14px;
         }
 
-        /* Table */
         table { width: 100%; border-collapse: collapse; min-width: 750px; }
         th { text-align: left; padding: 12px; border-bottom: 2px solid #F0ECE3; color: #8c7a6b; font-size: 15px; }
         td { padding: 12px; border-bottom: 1px solid #F0ECE3; font-size: 14px; vertical-align: top; }
         
-        /* Status Badges */
         .status-รอยืนยัน { color: #E67E22; background: #FEF5E7; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-ยืนยันแล้ว { color: #27AE60; background: #E9F7EF; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-เสร็จสิ้น { color: #2980B9; background: #EAF2F8; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         .status-ยกเลิก { color: #C0392B; background: #FDEDEC; padding: 4px 8px; border-radius: 4px; font-weight: 500; font-size: 13px;}
         
-        /* Buttons */
         button { 
-            background: #8c7a6b; color: white; border: none; padding: 6px 12px; 
-            border-radius: 6px; cursor: pointer; font-family: 'Prompt'; font-size: 13px;
-            transition: 0.3s;
+            background: #8c7a6b; color: white; border: none; padding: 8px 12px; 
+            border-radius: 6px; cursor: pointer; font-family: 'Prompt'; font-size: 13px; transition: 0.3s;
         }
         button:hover { background: #6b5b4c; }
         
         .btn-done { background: #3498DB; margin-left: 5px; }
         .btn-done:hover { background: #2980B9; }
-        
         .btn-cancel { background: #E0E0E0; color: #666; margin-top: 5px; width: 100%;}
         .btn-cancel:hover { background: #ccc; }
-
         .btn-cancel-sm { background: #E0E0E0; color: #C0392B; padding: 4px 10px; font-size: 12px; }
         .btn-cancel-sm:hover { background: #C0392B; color: white; }
     </style>
@@ -300,6 +289,13 @@
             <div class="holiday-setup">
                 <label style="font-size: 14px;">เลือกวันที่ต้องการปิด:</label>
                 <input type="date" id="holidayInput">
+                
+                <select id="holidayPeriod" style="display: none;">
+                    <option value="all">ปิดทั้งวัน</option>
+                    <option value="morning">ปิดเฉพาะช่วงเช้า (08.30 - 12.00)</option>
+                    <option value="evening">ปิดเฉพาะช่วงเย็น (17.00 - 20.00)</option>
+                </select>
+
                 <button onclick="addHoliday()">+ เพิ่มวันหยุด</button>
             </div>
             <div id="holidayList" class="holiday-grid">
@@ -310,7 +306,6 @@
         <div class="card table-card">
             <div class="header-container">
                 <h1>🗓️ ระบบจัดการคิวนัดหมาย - CardioPlus</h1>
-                
                 <div class="filter-box">
                     <label style="font-size: 14px;">📌 แสดงผล: </label>
                     <select id="filterStatus">
@@ -320,7 +315,6 @@
                     </select>
                 </div>
             </div>
-
             <table>
                 <thead>
                     <tr>
